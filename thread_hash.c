@@ -28,8 +28,11 @@ int main(int argc, char *argv[]) {
 	char * ourhash = NULL;
 	char *newsalt= NULL;
 	char *line = NULL;
+	char * line2= NULL;
 	size_t len = 0;
+	size_t len2 =0;
 	FILE * inputfd = NULL;
+	FILE * dictfd = NULL;
 	int opt = 0;            
 	int fd = STDOUT_FILENO;
 	int threads =1;
@@ -77,19 +80,38 @@ int main(int argc, char *argv[]) {
 	}
 
 
+	dictfd = fopen(dictionaryfile, "r");
 	inputfd = fopen(filename, "r");
 	if(inputfd){
+	//input a hash
 	 while (getline(&line, &len, inputfd) != -1) {
+		 // initialize the struct
 		 memset(&data, 0, sizeof(struct crypt_data));
+
+		 printf("\noriginal:%s\n", line);
+		 newsalt = getsalt(line);
+		 //with each hash go through the list of words and see if theres a match, if theres a match print
+		 while(getline(&line2, &len2, dictfd) != -1){
+			 ourhash = crypt_rn(line2 ,newsalt, &data, sizeof(data));
+
+			 printf("trying word%s", line2);
+			 if(strcmp(ourhash, line) ==0){
+				 printf("Match found%s", line2);
+			 }
+
+		 }
+
+		 /*
 		 printf("\noriginal:$5$rounds=1334$XTdSb0KNJsT4j4QH$HJfcfDXd1eu/OV8xrKU20b1wfWGGBX7SY2OA5e7C5YA\n");
 
-		 newsalt = getsalt("$5$rounds=1334$XTdSb0KNJsT4j4QH$HJfcfDXd1eu/OV8xrKU20b1wfWGGBX7SY2OA5e7C5YA");
 		 printf("\nnewnew%s\n", newsalt);
 
 		 ourhash = crypt_rn("Reformed",newsalt, &data, sizeof(data));
 		 printf("our hash =%s\n", ourhash);
 
 		 find_hashtype(line);
+		 */
+
 		 exit(EXIT_SUCCESS);
 
 
