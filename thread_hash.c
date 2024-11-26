@@ -83,39 +83,51 @@ int main(int argc, char *argv[]) {
 	dictfd = fopen(dictionaryfile, "r");
 	inputfd = fopen(filename, "r");
 	if(inputfd){
-	//input a hash
-	 while (getline(&line, &len, inputfd) != -1) {
-		 // initialize the struct
-		 memset(&data, 0, sizeof(struct crypt_data));
+		//input a hash
+		while (getline(&line, &len, inputfd) != -1) {
+			// Remove newline character from line
+			size_t linelen = strlen(line);
+			if (linelen > 0 && line[linelen - 1] == '\n') {
+				line[linelen - 1] = '\0';
+			}
 
-		 printf("\noriginal:%s\n", line);
-		 newsalt = getsalt(line);
-		 //with each hash go through the list of words and see if theres a match, if theres a match print
-		 while(getline(&line2, &len2, dictfd) != -1){
-			 ourhash = crypt_rn(line2 ,newsalt, &data, sizeof(data));
+			// Initialize the struct
+			memset(&data, 0, sizeof(struct crypt_data));
 
-			 printf("trying word%s", line2);
-			 if(strcmp(ourhash, line) ==0){
-				 printf("Match found%s", line2);
-			 }
+//				printf("\ntrying hash: %s\n", line);
+				// Get the salt from the hash
+				newsalt = getsalt(line);
+				if (!newsalt) {
+					fprintf(stderr, "Failed to extract salt\n");
+					continue;
+				}
 
-		 }
+				// Iterate over dictionary words
+				while (getline(&line2, &len2, dictfd) != -1) {
+					// Remove newline character from line2
+					size_t line2len = strlen(line2);
+					if (line2len > 0 && line2[line2len - 1] == '\n') {
+						line2[line2len - 1] = '\0';
+					}
 
-		 /*
-		 printf("\noriginal:$5$rounds=1334$XTdSb0KNJsT4j4QH$HJfcfDXd1eu/OV8xrKU20b1wfWGGBX7SY2OA5e7C5YA\n");
+					// Hash the dictionary word with the salt
+					ourhash = crypt_rn(line2, newsalt, &data, sizeof(data));
 
-		 printf("\nnewnew%s\n", newsalt);
+					if (strcmp(ourhash, line) == 0) {
+						printf("\n\ncracked: %s -> %s\n", line2, line);
+						rewind(dictfd);
+						break; // Exit inner loop if match is found
+					}
+				}
+				if(feof(dictfd)){
+					printf("\n***failed to crack  %s\n", line);
+				}
+				rewind(dictfd);
 
-		 ourhash = crypt_rn("Reformed",newsalt, &data, sizeof(data));
-		 printf("our hash =%s\n", ourhash);
-
-		 find_hashtype(line);
-		 */
-
-		 exit(EXIT_SUCCESS);
+			// Free the dynamically allocated salt
+		}
 
 
-	 }
 	}
 }
 
@@ -134,7 +146,6 @@ int find_hashtype(char hash[]){ //Find Hash Type
 				return 2;
 				break;
 			case '5': // SHA-256
-				  // expenthesis:$5$rounds=1338$21Xm5h/zMhAcEx20$JhNslGqXno.9l2PEnR9AucFlcKaoBFOQb7Afjds0Oo4
 				return 3;
 				break;
 			case '6': // SHA-512
@@ -168,6 +179,7 @@ int find_hashtype(char hash[]){ //Find Hash Type
 char *getsalt(char hash[]) {
     int length = strlen(hash);
     int signs = 0;
+    $y$j7T$2D/kcBdk1f4chh7zeJlGxgSffzkc6yFygJt.KxMyaAoP25GhBZWs8s5JO97eUpNK$
 
     // Allocate memory dynamically for the resulting string
     char *arr = malloc(length + 1); // +1 for the null terminator
@@ -211,6 +223,7 @@ char * getsalt(char hash[]){
 	return arr;
 }
 */
+
 double elapse_time(struct timeval * t0, struct timeval * t1){ //mm2.c function
 	double et = (((double) (t1->tv_usec - t0->tv_usec)) / MICROSECONDS_PER_SECOND) + ((double) (t1->tv_sec - t0->tv_sec));
 	return et;
