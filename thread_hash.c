@@ -30,6 +30,7 @@ double elapse_time(struct timeval * t0, struct timeval * t1); // Function From m
 char * getsalt(char hash[]);
 void hashfunct(char * hashfile, char * dictfile);
 void crackhash(void);
+void freelists(void);
 
 
 //Main
@@ -91,6 +92,7 @@ int main(int argc, char *argv[]) {
 	//global variable for dictionary 
 	hashfunct(filename, dictionaryfile);
 	crackhash();
+	freelists();
 }
 
 void crackhash(void){
@@ -115,6 +117,20 @@ void crackhash(void){
 
 	}	
 
+}
+
+void freelists(void){
+	for(int i=0; i< dictcount; i++){
+		free(dictArr[i]);
+	}
+	free(dictArr);         // Free the dictArr itself if it was dynamically allocated
+	dictArr = NULL;
+	for(int i =0; i < passcount; i++){
+		free(passArr[i]);
+
+	}
+	free(passArr);
+	passArr = NULL;
 }
 
 
