@@ -1,5 +1,5 @@
-//Daniel Huynh, Novemberr 23th, 2024
-//CS333 Jesse Chaney Lab 5. This program reads and writes archive files using getopt and read() write() functions
+// Daniel Huynh, November 23th, 2024
+// CS333 Jesse Chaney Lab 5. This program reads and writes archive files using getopt and read() write() functions
 //
 #include <stdbool.h>
 #include <crypt.h>
@@ -8,308 +8,253 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-#include <time.h>
-#include "thread_hash.h"
 #include <pthread.h>
-//Define Macros
+#include "thread_hash.h"
+#include <sys/time.h>
+// Define Macros
 #define BUF_SIZE 1024
-//store files into char array and iterate to crack hashes and for each password, pthread_lock and unlock 
 
-// global file and thread variables
-static int num_threads=1;
-static char **  dictArr = NULL;
-static char ** passArr = NULL;
+// Global file and thread variables
+static int num_threads = 1;
+static char** dictArr = NULL;
+static char** passArr = NULL;
 
-// global count variable to clear arary 
-int dictcount=0;
-int passcount=0;
+// Global count variables
+int dictcount = 0;
+int passcount = 0;
 
-//Functionas
+// Mutex for thread-safe operations
+pthread_mutex_t lock;
+
+// Function declarations
 int find_hashtype(char hash[]);
-double elapse_time(struct timeval * t0, struct timeval * t1); // Function From mm2.c
-char * getsalt(char hash[]);
-void hashfunct(char * hashfile, char * dictfile);
+double elapse_time(struct timeval* t0, struct timeval* t1);
+char* getsalt(char hash[]);
+void hashfunct(char* hashfile, char* dictfile);
 void crackhash(void);
 void freelists(void);
+void* threaded_crackhash(void* arg);
 
+// Struct for thread arguments
+typedef struct {
+    int thread_id;
+    int start_idx;
+    int end_idx;
+} thread_args;
 
-//Main
-int main(int argc, char *argv[]) {
-	//Define Variables
-	bool verbose;
-	int opt = 0;            
-	//Our Files From Opt Arg
-	char *  filename = NULL;
-//	char *  outputfile = NULL;
-	char * dictionaryfile = NULL;
-	
-	//File Reading
+// Main function
+int main(int argc, char* argv[]) {
+    bool verbose = false;
+    int opt = 0;
+    char* filename = NULL;
+    char* dictionaryfile = NULL;
 
-//	int fd = STDOUT_FILENO;
-//	pthread_t * threads = NULL;
-//	long tid = 0;
-
-
-	//Handle Commands
-	while ((opt = getopt(argc, argv, OPTIONS)) != -1) {
-		switch (opt) {
-			case 'i': //Input File **Required**
-				if(optarg) filename = optarg;
-				printf("%s", filename);
-				break;
-			case 'o': //Output File
-//				outputfile = optarg;
-//				if(optarg) fd = open(optarg, O_WRONLY);
-				break;
-			case 'd': // Dictionary File **Required**
-				dictionaryfile = optarg;
-				printf("%s", dictionaryfile);
-				break;
-			case 't': // Set Threads
-				num_threads = atoi(optarg);
-//				threads= malloc(num_threads * sizeof(pthread_t));
-				break;
-			case 'n': // Nice Function
-				 //pass 10 to the nice function
-				nice(10);
-				break;
-			case 'v': // Verbose Option
-				verbose = !verbose;
-				break;
-			case 'h': // Help Menu
-				break;
-			default:
-				printf("Error processing an option\n");
-
-		}
-	}
-	if(!filename){
-		printf("\nYou must include an input file using the -i option\n");
-		exit(EXIT_FAILURE);
-	}
-
-
-	//global variable for dictionary 
-	hashfunct(filename, dictionaryfile);
-	crackhash();
-	freelists();
-}
-
-void crackhash(void){
-	struct crypt_data data;
-	char * ourhash = NULL;
-	//Loop our char * array of hashes
-	for(int i =0; i < passcount; i++){
-		// Initialize the struct
-		memset(&data, 0, sizeof(struct crypt_data));
-		for(int j =0; j < dictcount; j++){
-			ourhash = crypt_rn(dictArr[j], passArr[i], &data, sizeof(data));
-
-			if (strcmp(ourhash, passArr[i]) == 0) {
-				printf("\n\ncracked: %s -> %s\n", passArr[i], dictArr[j]);
-				break; // Exit inner loop if match is found
-			}
-			if (j == dictcount - 1) {
-				printf("\n***failed to crack  %s\n", passArr[i]);
-			}
-		}
-
-
-	}	
-
-}
-
-void freelists(void){
-	for(int i=0; i< dictcount; i++){
-		free(dictArr[i]);
-	}
-	free(dictArr);         // Free the dictArr itself if it was dynamically allocated
-	dictArr = NULL;
-	for(int i =0; i < passcount; i++){
-		free(passArr[i]);
-
-	}
-	free(passArr);
-	passArr = NULL;
-}
-
-
-void hashfunct(char * passfile, char * dictfile ){
-	FILE* dictfd =0;
-	FILE* passfd =0;
-	size_t len = 0;	
-	int arrcount =0;
-	//size_t len2 =0;
-	char * pass = NULL;
-	char * dict = NULL;
-	dictfd = fopen(dictfile, "r");
-	passfd = fopen(passfile, "r");
-	if(passfd){
-		//Allocate the correct amount of indexes for our char **
-		while(getline(&pass, &len, passfd) != -1){
-			size_t linelen = strlen(pass);
-			if (linelen > 0 && pass[linelen - 1] == '\n') {
-				pass[linelen - 1] = '\0';
-			}
-			passcount++;
-		}
-		rewind(passfd);
-		passArr = malloc(sizeof(char*) * passcount);
-		if (!passArr) {
-			printf("Failed password file malloc\n");
-			exit(EXIT_FAILURE);
-		}
-
-		while(getline(&pass, &len, passfd) != -1){
-			size_t linelen = strlen(pass);
-			if (linelen > 0 && pass[linelen - 1] == '\n') {
-				pass[linelen - 1] = '\0';
-			}
-			passArr[arrcount] = strdup(pass);
-			arrcount++;
-		}
-		//Reset count variable for reuse
-		arrcount =0;
-
-	}else{
-		printf("\nError opening password file\n");
-		exit(EXIT_FAILURE);
-	}
-	if(dictfd){
-		//Allocate the correct amount of indexes for our char **
-                while(getline(&dict, &len, dictfd) != -1){
-                        size_t linelen = strlen(dict);
-                        if (linelen > 0 && dict[linelen - 1] == '\n') {
-                                dict[linelen - 1] = '\0';
-                        }
-			//Index count
-                        dictcount++;
-                }
-                rewind(dictfd);
-                dictArr = malloc(sizeof(char*) * dictcount);
-                if (!dictArr) {
-                        printf("Failed password file malloc\n");
-                        exit(EXIT_FAILURE);
-                }
-
-                while(getline(&dict, &len, dictfd) != -1){
-                        size_t linelen = strlen(dict);
-                        if (linelen > 0 && dict[linelen - 1] == '\n') {
-                                dict[linelen - 1] = '\0';
-                        }
-                        dictArr[arrcount] = strdup(dict);
-			//Read into index
-                        arrcount++;
-                }
-		//Reset count variables for reuse
-		arrcount =0;
-
-        }else{
-                printf("\nError opening dictionary file\n");
-                exit(EXIT_FAILURE);
-        }
-
-	free(pass);  // Free the memory allocated by getline
-	fclose(passfd);
-	free(dict);
-	fclose(dictfd);
-}
-
-
-
-int find_hashtype(char hash[]){ //Find Hash Type
-	if(!hash){
-		printf("Hash NULL");
-		exit(EXIT_FAILURE);
-	}
-	if(hash[0] == '$'){
-		switch(hash[1]){
-			case '3': // NT algorithm
-				return 1;
-				break;
-			case '1': // MD5 algorithm
-				return 2;
-				break;
-			case '5': // SHA-256
-				return 3;
-				break;
-			case '6': // SHA-512
-				return 4;
-				break;
-			case 'y': // yescrypt algorithm
-				return 5;
-				break;
-			case 'g': // gost-yescript 
-				if(hash[2] == 'y'){
-					return 6;
-				}
-				break;
-			case '2': // bcrypt
-				if(hash[2] =='b'){
-					return 7;
-				}
-				break;
-			default: //None
-				return -1;
-				break;
-
-		}
-	}
-	//DES Algorithm
-	printf("DES");
-	return 0;
-
-
-}
-char *getsalt(char hash[]) {
-	int length = strlen(hash);
-	int signs = 0;
-
-	// Allocate memory dynamically for the resulting string
-	char *arr = malloc(length + 1); // +1 for the null terminator
-	if (arr == NULL) {
-        perror("Memory allocation failed");
-        return NULL;
-    }
-
-    for (int i = 0; i < length; i++) {
-        arr[i] = hash[i]; // Copy character
-        if (hash[i] == '$') {
-            ++signs;
-        }
-        if (signs == 4) { // Stop copying after the fourth '$'
-            arr[i + 1] = '\0'; // Null-terminate the string
-            return arr;
+    // Handle commands
+    while ((opt = getopt(argc, argv, OPTIONS)) != -1) {
+        switch (opt) {
+            case 'i': // Input file **Required**
+                if (optarg) filename = optarg;
+                break;
+            case 'd': // Dictionary file **Required**
+                dictionaryfile = optarg;
+                break;
+            case 't': // Set threads
+                num_threads = atoi(optarg);
+                break;
+            case 'n': // Nice function
+                nice(10);
+                break;
+            case 'v': // Verbose option
+                verbose = !verbose;
+                break;
+            case 'h': // Help menu
+                printf("Usage: %s -i <input_file> -d <dictionary_file> [-t <num_threads>] [-n] [-v]\n", argv[0]);
+                exit(EXIT_SUCCESS);
+            default:
+                printf("Error processing an option\n");
         }
     }
 
-    // If the loop completes without finding 4 '$' signs
-    arr[length] = '\0'; // Null-terminate the string
-    return arr;
+    if (!filename || !dictionaryfile) {
+        printf("\nYou must include an input file (-i) and a dictionary file (-d)\n");
+        exit(EXIT_FAILURE);
+    }
+
+    // Initialize mutex
+    pthread_mutex_init(&lock, NULL);
+
+    // Process files and crack hashes
+    hashfunct(filename, dictionaryfile);
+    crackhash();
+    freelists();
+
+    // Destroy mutex
+    pthread_mutex_destroy(&lock);
+
+    return 0;
 }
 
-/*
-char * getsalt(char hash[]){
-	char arr[100];
-	int length = strlen(hash);
-	int signs =0;
-	for(int i =0; i < length; i++){
-		if(hash[i] =='$'){
-			++signs;
-		}
-		arr[i] = hash[i];
-		if(signs == 4){
-			return arr;
-		}
-	}
-	printf("\nfunction done:%s ", arr); 
-	// expenthesis:$5$rounds=1338$21Xm5h/zMhAcEx20$JhNslGqXno.9l2PEnR9AucFlcKaoBFOQb7Afjds0Oo4
-	return arr;
-}
-*/
+// Threaded hash cracking function
+void* threaded_crackhash(void* arg) {
+    thread_args* t_args = (thread_args*)arg;
+    struct crypt_data data;
+    char* ourhash = NULL;
 
-double elapse_time(struct timeval * t0, struct timeval * t1){ //mm2.c function
-	double et = (((double) (t1->tv_usec - t0->tv_usec)) / MICROSECONDS_PER_SECOND) + ((double) (t1->tv_sec - t0->tv_sec));
-	return et;
+    for (int i = t_args->start_idx; i < t_args->end_idx; ++i) {
+        memset(&data, 0, sizeof(struct crypt_data)); // Initialize crypt data
+
+        for (int j = 0; j < dictcount; ++j) {
+            ourhash = crypt_rn(dictArr[j], passArr[i], &data, sizeof(data));
+
+            if (strcmp(ourhash, passArr[i]) == 0) {
+                pthread_mutex_lock(&lock); // Protect output
+                printf("\nThread %d cracked: %s -> %s\n", t_args->thread_id, passArr[i], dictArr[j]);
+                pthread_mutex_unlock(&lock);
+                break;
+            }
+
+            if (j == dictcount - 1) {
+                pthread_mutex_lock(&lock); // Protect output
+                printf("\nThread %d ***failed to crack  %s\n", t_args->thread_id, passArr[i]);
+                pthread_mutex_unlock(&lock);
+            }
+        }
+    }
+
+    pthread_exit(NULL);
+}
+
+// Crack hashes using threads
+void crackhash(void) {
+    pthread_t* threads = malloc(num_threads * sizeof(pthread_t));
+    thread_args* t_args = malloc(num_threads * sizeof(thread_args));
+
+    int chunk_size = passcount / num_threads;
+    int remainder = passcount % num_threads;
+    int start = 0;
+
+    for (int i = 0; i < num_threads; ++i) {
+        t_args[i].thread_id = i;
+        t_args[i].start_idx = start;
+        t_args[i].end_idx = start + chunk_size + (i < remainder ? 1 : 0);
+        start = t_args[i].end_idx;
+
+        if (pthread_create(&threads[i], NULL, threaded_crackhash, (void*)&t_args[i]) != 0) {
+            perror("Failed to create thread");
+            exit(EXIT_FAILURE);
+        }
+    }
+
+    // Wait for all threads to complete
+    for (int i = 0; i < num_threads; ++i) {
+        pthread_join(threads[i], NULL);
+    }
+
+    free(threads);
+    free(t_args);
+}
+
+// Free dynamically allocated lists
+void freelists(void) {
+    for (int i = 0; i < dictcount; i++) {
+        free(dictArr[i]);
+    }
+    free(dictArr);
+    dictArr = NULL;
+
+    for (int i = 0; i < passcount; i++) {
+        free(passArr[i]);
+    }
+    free(passArr);
+    passArr = NULL;
+}
+
+// Parse hash and dictionary files
+void hashfunct(char* passfile, char* dictfile) {
+    FILE* dictfd = NULL;
+    FILE* passfd = NULL;
+    size_t len = 0;
+    int arrcount = 0;
+    char* pass = NULL;
+    char* dict = NULL;
+
+    dictfd = fopen(dictfile, "r");
+    passfd = fopen(passfile, "r");
+
+    if (passfd) {
+        while (getline(&pass, &len, passfd) != -1) {
+            size_t linelen = strlen(pass);
+            if (linelen > 0 && pass[linelen - 1] == '\n') {
+                pass[linelen - 1] = '\0';
+            }
+            passcount++;
+        }
+        rewind(passfd);
+        passArr = malloc(sizeof(char*) * passcount);
+
+        while (getline(&pass, &len, passfd) != -1) {
+            size_t linelen = strlen(pass);
+            if (linelen > 0 && pass[linelen - 1] == '\n') {
+                pass[linelen - 1] = '\0';
+            }
+            passArr[arrcount] = strdup(pass);
+            arrcount++;
+        }
+        arrcount = 0;
+    } else {
+        printf("\nError opening password file\n");
+        exit(EXIT_FAILURE);
+    }
+
+    if (dictfd) {
+        while (getline(&dict, &len, dictfd) != -1) {
+            size_t linelen = strlen(dict);
+            if (linelen > 0 && dict[linelen - 1] == '\n') {
+                dict[linelen - 1] = '\0';
+            }
+            dictcount++;
+        }
+        rewind(dictfd);
+        dictArr = malloc(sizeof(char*) * dictcount);
+
+        while (getline(&dict, &len, dictfd) != -1) {
+            size_t linelen = strlen(dict);
+            if (linelen > 0 && dict[linelen - 1] == '\n') {
+                dict[linelen - 1] = '\0';
+            }
+            dictArr[arrcount] = strdup(dict);
+            arrcount++;
+        }
+        arrcount = 0;
+    } else {
+        printf("\nError opening dictionary file\n");
+        exit(EXIT_FAILURE);
+    }
+
+    free(pass);
+    fclose(passfd);
+    free(dict);
+    fclose(dictfd);
+}
+
+// Helper function to determine hash type
+int find_hashtype(char hash[]) {
+    if (!hash) {
+        printf("Hash NULL");
+        exit(EXIT_FAILURE);
+    }
+    if (hash[0] == '$') {
+        switch (hash[1]) {
+            case '3': return 1; // NT
+            case '1': return 2; // MD5
+            case '5': return 3; // SHA-256
+            case '6': return 4; // SHA-512
+            case 'y': return 5; // yescrypt
+            case 'g': if (hash[2] == 'y') return 6; break; // gost-yescrypt
+            case '2': if (hash[2] == 'b') return 7; break; // bcrypt
+            default: return -1;
+        }
+    }
+    return 0; // DES
 }
 
