@@ -16,6 +16,7 @@
 
 // Global file and thread variables
 static int num_threads = 1;
+FILE * outputfile = NULL;
 static char** dictArr = NULL;
 static char** passArr = NULL;
 
@@ -44,10 +45,13 @@ typedef struct {
 
 // Main function
 int main(int argc, char* argv[]) {
+	double op_time;
     bool verbose = false;
     int opt = 0;
     char* filename = NULL;
     char* dictionaryfile = NULL;
+    struct timeval t0, t1, t2, t3, t4, t5;
+    outputfile =stdout;
 
     // Handle commands
     while ((opt = getopt(argc, argv, OPTIONS)) != -1) {
@@ -57,7 +61,16 @@ int main(int argc, char* argv[]) {
                 break;
             case 'd': // Dictionary file **Required**
                 dictionaryfile = optarg;
-                break;
+                break;	
+	    case 'o':
+		if (optarg) {
+			outputfile = fopen(optarg, "w");
+			if (!outputfile) {
+				perror("fopen");
+				return 1;
+			}
+		}
+		break;
             case 't': // Set threads
                 num_threads = atoi(optarg);
                 break;
@@ -82,13 +95,28 @@ int main(int argc, char* argv[]) {
 
     // Initialize mutex
     pthread_mutex_init(&lock, NULL);
+     // Start measuring total time
+    gettimeofday(&t0, NULL);
 
-    // Process files and crack hashes
+    // Measure time to process files (hashing)
+    gettimeofday(&t1, NULL);
     hashfunct(filename, dictionaryfile);
-    crackhash();
-    freelists();
+    gettimeofday(&t2, NULL);
 
-    // Destroy mutex
+    // Measure time to crack hashes
+    gettimeofday(&t3, NULL);  // Start time for cracking hashes
+    crackhash();
+    gettimeofday(&t4, NULL);  // End time after cracking hashes
+
+    // Free resources
+    freelists();
+    gettimeofday(&t5, NULL);  // Time after freeing resources
+	{
+    op_time = elapse_time(&t3, &t4);
+
+    printf("  O/P   time: %8.2lf\n", op_time);
+	}
+
     pthread_mutex_destroy(&lock);
 
     return 0;
@@ -96,26 +124,26 @@ int main(int argc, char* argv[]) {
 
 // Threaded hash cracking function
 void* threaded_crackhash(void* arg) {
-    thread_args* t_args = (thread_args*)arg;
-    struct crypt_data data;
-    char* ourhash = NULL;
+	thread_args* t_args = (thread_args*)arg;
+	struct crypt_data data;
+	char* ourhash = NULL;
 
-    for (int i = t_args->start_idx; i < t_args->end_idx; ++i) {
-        memset(&data, 0, sizeof(struct crypt_data)); // Initialize crypt data
+	for (int i = t_args->start_idx; i < t_args->end_idx; ++i) {
+		memset(&data, 0, sizeof(struct crypt_data)); // Initialize crypt data
 
-        for (int j = 0; j < dictcount; ++j) {
-            ourhash = crypt_rn(dictArr[j], passArr[i], &data, sizeof(data));
+		for (int j = 0; j < dictcount; ++j) {
+			ourhash = crypt_rn(dictArr[j], passArr[i], &data, sizeof(data));
 
-            if (strcmp(ourhash, passArr[i]) == 0) {
+			if (strcmp(ourhash, passArr[i]) == 0) {
+				pthread_mutex_lock(&lock); // Protect output
+				fprintf(outputfile, "\nThread %d cracked: %s -> %s\n", t_args->thread_id, passArr[i], dictArr[j]);
+				pthread_mutex_unlock(&lock);
+				break;
+			}
+
+			if (j == dictcount - 1) {
                 pthread_mutex_lock(&lock); // Protect output
-                printf("\nThread %d cracked: %s -> %s\n", t_args->thread_id, passArr[i], dictArr[j]);
-                pthread_mutex_unlock(&lock);
-                break;
-            }
-
-            if (j == dictcount - 1) {
-                pthread_mutex_lock(&lock); // Protect output
-                printf("\nThread %d ***failed to crack  %s\n", t_args->thread_id, passArr[i]);
+                fprintf(outputfile, "\nThread %d ***failed to crack  %s\n", t_args->thread_id, passArr[i]);
                 pthread_mutex_unlock(&lock);
             }
         }
@@ -258,3 +286,7 @@ int find_hashtype(char hash[]) {
     return 0; // DES
 }
 
+double elapse_time(struct timeval * t0, struct timeval * t1){ //mm2.c function
+	double et = (((double) (t1->tv_usec - t0->tv_usec)) / MICROSECONDS_PER_SECOND) + ((double) (t1->tv_sec - t0->tv_sec));
+	return et;
+}
