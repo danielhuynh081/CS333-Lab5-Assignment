@@ -46,8 +46,6 @@ int main(int argc, char *argv[]) {
     char *filename = NULL;
     char *dictionaryfile = NULL;
     struct timeval t0, t1, t2, t3, t4, t5;
-    //char acct_file[256];
-    //FILE * acct = NULL;
     outputfile = stdout;
 
     // Handle commands
@@ -69,6 +67,11 @@ int main(int argc, char *argv[]) {
                 }
                 break;
             case 't': // Set threads
+		if(atoi(optarg) > 24){
+			printf("\nMax Threads: 24\n");
+			fclose(outputfile);
+			exit(EXIT_FAILURE);
+		}
                 num_threads = atoi(optarg);
                 break;
             case 'n': // Nice function
@@ -76,6 +79,7 @@ int main(int argc, char *argv[]) {
                 break;
             case 'v': // Verbose option
                 verbose = !verbose;
+		fprintf(stderr, "Verbose mode enabled.\n");
                 break;
             case 'h': // Help menu
                 printf("Usage: %s -i <input_file> -d <dictionary_file> [-t <num_threads>] [-n] [-v]\n", argv[0]);
@@ -89,11 +93,7 @@ int main(int argc, char *argv[]) {
         printf("\nYou must include an input file (-i) and a dictionary file (-d)\n");
         exit(EXIT_FAILURE);
     }
-    //strncpy(acct_file, filename, strlen(filename) - 4);
-    //acct_file[strlen(filename) - 4] = '\0';
-    // Append ".acct" to the string
-  //  strcat(acct_file, ".acct");
-//    acct = fopen(acct_file, "w");
+
 
     gettimeofday(&t0, NULL);
 
@@ -128,6 +128,8 @@ int main(int argc, char *argv[]) {
 
     //fprintf(acct, "\tDES: %d NT: %d MD5: %d SHA256: %d SHA512: %d YESCRYPT: %d GOST_YESCRYPT: %d BCRYPT: %d total: %d failed: %d\n",
       //     DES, NT, MD5, SHA256, SHA512, YESCRYPT, GOST_YESCRYPT, BCRYPT, total, failed);
+
+
     printf("\nTiming Summary:\n");
     printf("Total time: %8.2lf seconds\n", total_time);
     printf("  Alloc time: %8.2lf seconds\n", alloc_time);
@@ -137,6 +139,7 @@ int main(int argc, char *argv[]) {
 
     pthread_mutex_destroy(&lock);
 
+    fclose(outputfile);
     exit(EXIT_SUCCESS);
 }
 
@@ -231,7 +234,7 @@ void crackhash(void) {
     for (int i = 0; i < num_threads; ++i) {
         fprintf(stderr, "Thread %d processed %d words\n", i, hash_counts[i]);
     }
-
+    
     free(threads);
 }
 
