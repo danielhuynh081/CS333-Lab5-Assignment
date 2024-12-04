@@ -1,25 +1,27 @@
-// Daniel Huynh, November 23th, 2024
-// CS333 Jesse Chaney Lab 5. This program reads and writes archive files using getopt and read() write() functions
-//
-#include <stdbool.h>
-#include <crypt.h>
+
 #include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 #include <pthread.h>
-#include "thread_hash.h"
+#include <stdbool.h>
+#include <crypt.h>
 #include <sys/time.h>
+
 // Define Macros
 #define BUF_SIZE 1024
 #define MICROSECONDS_PER_SECOND 1000000.0
+#define OPTIONS "i:d:o:t:nvh"
 
 // Global file and thread variables
 static int num_threads = 1;
-FILE * outputfile = NULL;
-static char** dictArr = NULL;
-static char** passArr = NULL;
+FILE *outputfile = NULL;
+static char **dictArr = NULL;
+static char **passArr = NULL;
+pthread_t *threads = NULL;
+static int *hash_counts = NULL; // Per-thread hash count
+int DES, NT, MD5, SHA256, SHA512, YESCRYPT, GOST_YESCRYPT, BCRYPT,  total, failed;
 
 // Global count variables
 int dictcount = 0;
@@ -29,26 +31,24 @@ int passcount = 0;
 pthread_mutex_t lock;
 
 // Function declarations
-double elapse_time(struct timeval* t0, struct timeval* t1);
-char* getsalt(char hash[]);
-void hashfunct(char* hashfile, char* dictfile);
+double elapse_time(struct timeval *t0, struct timeval *t1);
+void hashfunct(char *hashfile, char *dictfile);
 void crackhash(void);
 void freelists(void);
-void* threaded_crackhash(void* arg);
-
-// Struct for thread arguments
-
+void *threaded_crackhash(void *arg);
+int find_hashtype(char hash[]);
 
 // Main function
-int main(int argc, char* argv[]) {
-	    double total_time, hash_time, crack_time, free_time;
-	double op_time;
+int main(int argc, char *argv[]) {
+    double total_time, alloc_time, init_time, comp_time, td_time;
     bool verbose = false;
     int opt = 0;
-    char* filename = NULL;
-    char* dictionaryfile = NULL;
+    char *filename = NULL;
+    char *dictionaryfile = NULL;
     struct timeval t0, t1, t2, t3, t4, t5;
-    outputfile =stdout;
+    //char acct_file[256];
+    //FILE * acct = NULL;
+    outputfile = stdout;
 
     // Handle commands
     while ((opt = getopt(argc, argv, OPTIONS)) != -1) {
@@ -58,16 +58,16 @@ int main(int argc, char* argv[]) {
                 break;
             case 'd': // Dictionary file **Required**
                 dictionaryfile = optarg;
-                break;	
-	    case 'o':
-		if (optarg) {
-			outputfile = fopen(optarg, "w");
-			if (!outputfile) {
-				perror("fopen");
-				return 1;
-			}
-		}
-		break;
+                break;
+            case 'o': // Output file
+                if (optarg) {
+                    outputfile = fopen(optarg, "w");
+                    if (!outputfile) {
+                        perror("fopen");
+                        return 1;
+                    }
+                }
+                break;
             case 't': // Set threads
                 num_threads = atoi(optarg);
                 break;
@@ -89,87 +89,147 @@ int main(int argc, char* argv[]) {
         printf("\nYou must include an input file (-i) and a dictionary file (-d)\n");
         exit(EXIT_FAILURE);
     }
+    //strncpy(acct_file, filename, strlen(filename) - 4);
+    //acct_file[strlen(filename) - 4] = '\0';
+    // Append ".acct" to the string
+  //  strcat(acct_file, ".acct");
+//    acct = fopen(acct_file, "w");
 
-    // Initialize mutex
-    pthread_mutex_init(&lock, NULL);
-     // Start measuring total time
     gettimeofday(&t0, NULL);
 
-    // Measure time to process files (hashing)
+    pthread_mutex_init(&lock, NULL);
+
     gettimeofday(&t1, NULL);
+
     hashfunct(filename, dictionaryfile);
+
     gettimeofday(&t2, NULL);
 
-    // Measure time to crack hashes
-    gettimeofday(&t3, NULL);  // Start time for cracking hashes
+    threads = malloc(num_threads * sizeof(pthread_t));
+    hash_counts = calloc(num_threads, sizeof(int)); // Allocate hash counters
+    if (!hash_counts) {
+        perror("Failed to allocate hash_counts");
+        exit(EXIT_FAILURE);
+    }
+
+    gettimeofday(&t3, NULL);
     crackhash();
-    gettimeofday(&t4, NULL);  // End time after cracking hashes
+    gettimeofday(&t4, NULL);
 
-    // Free resources
     freelists();
-    gettimeofday(&t5, NULL);  // Time after freeing resources
-	{
-    op_time = elapse_time(&t3, &t4);
+    free(hash_counts); // Free hash count array
+    gettimeofday(&t5, NULL);
 
-    printf("  O/P   time: %8.2lf\n", op_time);
-	}
+    total_time = elapse_time(&t0, &t5);
+    alloc_time = elapse_time(&t2, &t3);
+    init_time = elapse_time(&t1, &t2);
+    comp_time = elapse_time(&t3, &t4);
+    td_time = elapse_time(&t4, &t5);
+
+    //fprintf(acct, "\tDES: %d NT: %d MD5: %d SHA256: %d SHA512: %d YESCRYPT: %d GOST_YESCRYPT: %d BCRYPT: %d total: %d failed: %d\n",
+      //     DES, NT, MD5, SHA256, SHA512, YESCRYPT, GOST_YESCRYPT, BCRYPT, total, failed);
+    printf("\nTiming Summary:\n");
+    printf("Total time: %8.2lf seconds\n", total_time);
+    printf("  Alloc time: %8.2lf seconds\n", alloc_time);
+    printf("  Init  time: %8.2lf seconds\n", init_time);
+    printf("  Comp  time: %8.2lf seconds\n", comp_time);
+    printf("  T/D   time: %8.2lf seconds\n", td_time);
 
     pthread_mutex_destroy(&lock);
 
-    return 0;
+    exit(EXIT_SUCCESS);
 }
 
 // Threaded hash cracking function
-
-void* threaded_crackhash(void* arg) {
-    long thread_id = (long)arg;  // Retrieve thread ID
+void *threaded_crackhash(void *arg) {
+    long thread_id = (long)arg; // Retrieve thread ID
     struct crypt_data data;
-    char* ourhash = NULL;
+    char *ourhash = NULL;
+    bool cracked;
+    int result;
 
-    int chunk_size = passcount / num_threads;
-    int start_idx = thread_id * chunk_size;
-    int end_idx = (thread_id == num_threads - 1) ? passcount : start_idx + chunk_size;
+    for (int i = thread_id; i < passcount; i += num_threads) {
+        hash_counts[thread_id]++; // Increment only once per password
+	cracked = false;
+	result = find_hashtype(passArr[i]);
+	switch (result) {
+            case 1:  // NT hash
+                NT++;  // Increment NT counter
+                break;
 
-    for (int i = start_idx; i < end_idx; ++i) {
-        memset(&data, 0, sizeof(struct crypt_data));  // Initialize crypt data
+            case 2:  // MD5 hash
+                MD5++;  // Increment MD5 counter
+                break;
 
-        for (int j = 0; j < dictcount; ++j) {
+            case 3:  // SHA-256 hash
+                SHA256++;  // Increment SHA256 counter
+                break;
+
+            case 4:  // SHA-512 hash
+                SHA512++;  // Increment SHA512 counter
+                break;
+
+            case 5:  // yescrypt hash
+                YESCRYPT++;  // Increment YESCRYPT counter
+                break;
+
+            case 6:  // gost-yescrypt hash
+                GOST_YESCRYPT++;  // Increment GOST_YESCRYPT counter
+                break;
+
+            case 7:  // bcrypt hash
+                BCRYPT++;  // Increment BCRYPT counter
+                break;
+
+            case 0:  // DES hash
+                DES++;  // Increment DES counter
+                break;
+
+            default:  // Unknown or unsupported hash types
+                fprintf(stderr, "Unsupported hash type for password: %s\n", passArr[i]);
+                failed++;
+                break;
+        }
+	total++;
+	for (int j = 0; j < dictcount; ++j) {
+		memset(&data, 0, sizeof(struct crypt_data)); // Initialize crypt data
             ourhash = crypt_rn(dictArr[j], passArr[i], &data, sizeof(data));
 
             if (strcmp(ourhash, passArr[i]) == 0) {
-                pthread_mutex_lock(&lock);  // Protect output
-                fprintf(outputfile, "\ncracked: %s -> %s\n", passArr[i], dictArr[j]);
+                pthread_mutex_lock(&lock); // Protect output
+                fprintf(outputfile, "cracked  %s  %s\n", dictArr[j], passArr[i]);
+		cracked = true;
                 pthread_mutex_unlock(&lock);
+		//add to array
                 break;
             }
 
-            if (j == dictcount - 1) {
-                pthread_mutex_lock(&lock);  // Protect output
-                fprintf(outputfile, "\n***failed to crack  %s\n", passArr[i]);
-                pthread_mutex_unlock(&lock);
-            }
-        }
+	}
+	if(!cracked){
+		fprintf(outputfile, "*** failed to crack  %s\n", passArr[i]);
+		failed++;
+	}
     }
 
     pthread_exit(NULL);
+
 }
 
-
 // Crack hashes using threads
-
 void crackhash(void) {
-    pthread_t* threads = malloc(num_threads * sizeof(pthread_t));
-
     for (long i = 0; i < num_threads; ++i) {
-        if (pthread_create(&threads[i], NULL, threaded_crackhash, (void*)i) != 0) {
+        if (pthread_create(&threads[i], NULL, threaded_crackhash, (void *)i) != 0) {
             perror("Failed to create thread");
             exit(EXIT_FAILURE);
         }
     }
 
-    // Wait for all threads to complete
     for (long i = 0; i < num_threads; ++i) {
         pthread_join(threads[i], NULL);
+    }
+	// print out how many passwords processed, how many failed to crack. and the amount of time each was running, i think i an do this my doing settimeofday between pthreadreate and ending it after before the print. sotring times in an array for each thread like the current one, also make new arrays for totla passwords tested and failed
+    for (int i = 0; i < num_threads; ++i) {
+        fprintf(stderr, "Thread %d processed %d words\n", i, hash_counts[i]);
     }
 
     free(threads);
@@ -181,15 +241,17 @@ void freelists(void) {
         free(dictArr[i]);
     }
     free(dictArr);
-    dictArr = NULL;
 
     for (int i = 0; i < passcount; i++) {
         free(passArr[i]);
     }
     free(passArr);
-    passArr = NULL;
 }
 
+// Calculate elapsed time
+double elapse_time(struct timeval *t0, struct timeval *t1) {
+    return ((t1->tv_sec - t0->tv_sec) + (t1->tv_usec - t0->tv_usec) / MICROSECONDS_PER_SECOND);
+}
 // Parse hash and dictionary files
 void hashfunct(char* passfile, char* dictfile) {
     FILE* dictfd = NULL;
@@ -257,9 +319,23 @@ void hashfunct(char* passfile, char* dictfile) {
     free(dict);
     fclose(dictfd);
 }
-
 // Helper function to determine hash type
-double elapse_time(struct timeval * t0, struct timeval * t1){ //mm2.c function
-	double et = (((double) (t1->tv_usec - t0->tv_usec)) / MICROSECONDS_PER_SECOND) + ((double) (t1->tv_sec - t0->tv_sec));
-	return et;
+int find_hashtype(char hash[]) {
+    if (!hash) {
+        printf("Hash NULL");
+        exit(EXIT_FAILURE);
+    }
+    if (hash[0] == '$') {
+        switch (hash[1]) {
+            case '3': return 1; // NT
+            case '1': return 2; // MD5
+            case '5': return 3; // SHA-256
+            case '6': return 4; // SHA-512
+            case 'y': return 5; // yescrypt
+            case 'g': if (hash[2] == 'y') return 6; break; // gost-yescrypt
+            case '2': if (hash[2] == 'b') return 7; break; // bcrypt
+            default: return -1;
+        }
+    }
+    return 0; // DES
 }
